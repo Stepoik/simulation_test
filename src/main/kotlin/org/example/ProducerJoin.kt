@@ -8,11 +8,11 @@ import kotlinx.coroutines.launch
 
 class ProducerJoin(
     private val scope: CoroutineScope,
+    bufferCapacity: Float,
     val name: String
 ) : Producer {
-    private var collectingJob: Job? = null
-    private val _producers = mutableMapOf<String, Producer>()
-    val producers: Map<String, Producer> get() = _producers
+    private val _producers = MutableStateFlow<Map<String, Producer>>(mapOf())
+    val producers: Map<String, Producer> get() = _producers.value
 
     private val _produced = MutableStateFlow(0f)
     override val produced: StateFlow<Float> = _produced
@@ -20,10 +20,17 @@ class ProducerJoin(
     private val _value = MutableStateFlow(0f)
     override val value: StateFlow<Float> = _value
 
+    private val _producing = BufferFlow(bufferCapacity)
+    override val producing: Flow<Float> = _producing
+
+    init {
+        subscribeOnProducers()
+    }
+
     override fun onConsumerChanged(requiredProduced: Float) {
         val produced = _produced.value
         val ratio = requiredProduced / produced
-        _producers.forEach { (_, producer) ->
+        _producers.value.forEach { (_, producer) ->
             producer.onConsumerChanged(producer.produced.value * ratio)
         }
     }
@@ -39,22 +46,30 @@ class ProducerJoin(
     }
 
     fun addProducer(producer: Producer, key: String) {
-        _producers[key] = producer
-        updateSubscriptionJob()
+        _producers.update { it + (key to producer) }
     }
 
-    private fun updateSubscriptionJob() {
-        collectingJob?.cancel()
-        collectingJob = scope.launch(Dispatchers.Main.immediate) {
-            val producersList = _producers.values.toList()
-            launch {
-                simpleCombine(producersList.map { it.produced }).collect {
-                    _produced.emit(it.sum())
-                }
-            }
-            launch {
-                simpleCombine(producersList.map { it.value }).collect {
-                    _value.emit(it.sum())
+    private fun subscribeOnProducers() {
+        scope.launch(Dispatchers.Main.immediate) {
+            var collectionJob: Job? = null
+            _producers.collect { producers ->
+                collectionJob?.cancel()
+                val producersList = producers.values.toList()
+                collectionJob = launch {
+                    launch {
+                        simpleCombine(producersList.map { it.produced }).collect {
+                            _produced.emit(it.sum())
+                        }
+                    }
+                    launch {
+                        simpleCombine(producersList.map { it.value }).collect {
+                            _value.emit(it.sum())
+                        }
+                    }
+
+                    producersList.map { it.producing }.merge().collect {
+                        _producing.emit(it)
+                    }
                 }
             }
         }

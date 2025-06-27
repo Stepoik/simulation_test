@@ -1,18 +1,18 @@
 package org.example
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import kotlin.math.max
+import kotlin.math.min
 
 class Consumer(
-    initialValue: Float,
     private val scope: CoroutineScope,
+    private val consumption: Float,
+    private val consumptionDelay: Long,
     val name: String
 ): Printable {
     private var producer: Producer? = null
 
-    var value = initialValue
+    var value = consumption
         private set
 
     fun setProducer(producer: Producer) {
@@ -21,8 +21,17 @@ class Consumer(
         this.producer = producer
 
         scope.launch(Dispatchers.Main.immediate) {
-            producer.produced.collect {
-                producer.onConsumerChanged(value)
+            launch {
+                producer.produced.collect {
+                    producer.onConsumerChanged(value)
+                }
+            }
+
+            launch {
+                producer.producing.bufferCollection(consumption) {
+                    println("Consumed $it")
+                    delay(consumptionDelay)
+                }
             }
         }
     }
