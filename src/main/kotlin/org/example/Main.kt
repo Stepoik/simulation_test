@@ -4,7 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
-fun main(): Unit = runBlocking(Dispatchers.Main.immediate) {
+fun main(): Unit = runBlocking {
     val aProd = ValueProducer(1f, scope = this, name = "a")
     val bProd = ValueProducer(2f, scope = this, name = "b")
     val cProd = ValueProducer(2f, scope = this, name = "c")
@@ -20,6 +20,7 @@ fun main(): Unit = runBlocking(Dispatchers.Main.immediate) {
 
     val consumer = Consumer(consumption = 6f, scope = this, consumptionDelay = 3000L, name = "d")
     consumer.setProducer(abcJoin)
+
     consumer.print()
     println("-----------------")
 }

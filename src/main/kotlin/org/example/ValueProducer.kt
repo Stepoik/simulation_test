@@ -25,7 +25,7 @@ class ValueProducer(
         get() = _producing
 
     init {
-        scope.launch(Dispatchers.Main.immediate) {
+        scope.launch {
             while (isActive) {
                 delay(PRODUCING_DELAY)
                 _producing.emit(_value.value)

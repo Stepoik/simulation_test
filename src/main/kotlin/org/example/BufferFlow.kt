@@ -28,39 +28,41 @@ class BufferCollector(
     }
 }
 
-typealias BufferContinuation = () -> Unit
-
 class BufferFlow(
     private val bufferCapacity: Float
 ) : Flow<Float> {
     private var buffered: Float = 0f
+    private val mutex = Mutex()
 
-    private val continuations = LinkedList<BufferContinuation>()
+    private val continuations = LinkedList<Waiter>()
     private val waiter = Waiter()
 
     override suspend fun collect(collector: FlowCollector<Float>) {
         val bufferCollector = (collector as? BufferCollector) ?: BufferCollector(BufferCollector.UNLIMITED, collector)
-
         coroutineScope {
             while (isActive) {
                 if (buffered == 0f) {
                     waiter.await()
                 }
-                val emitedValue = if (bufferCollector.consumption == BufferCollector.UNLIMITED) {
-                    buffered
-                } else {
-                    min(buffered, bufferCollector.consumption)
+
+                val emitedValue = mutex.withLock {
+                    val emitedValue = if (bufferCollector.consumption == BufferCollector.UNLIMITED) {
+                        buffered
+                    } else {
+                        min(buffered, bufferCollector.consumption)
+                    }
+                    buffered -= emitedValue
+                    emitedValue
                 }
-                buffered -= emitedValue
                 bufferCollector.emit(emitedValue)
 
                 var consumedCount = 0
-                continuations.toList().forEach {
-                    it.invoke()
-                    consumedCount++
-                }
-                repeat(consumedCount) {
-                    continuations.removeFirst()
+                mutex.withLock {
+                    continuations.forEach {
+                        it.resume()
+                        consumedCount++
+                    }
+                    continuations.clear()
                 }
             }
         }
@@ -75,24 +77,30 @@ class BufferFlow(
     }
 
     private suspend fun consumeValue(value: Float): Float {
-        return suspendCoroutine { cont ->
-            if (buffered >= bufferCapacity) {
-                continuations.add {
-                    cont.resume(0f)
-                }
-                waiter.resume()
-            } else {
+        val consumptionWaiter = Waiter()
+        return if (buffered >= bufferCapacity) {
+            mutex.withLock {
+                continuations.add(consumptionWaiter)
+            }
+            waiter.resume()
+            consumptionWaiter.await()
+            0f
+        } else {
+            val additionValue = mutex.withLock {
                 val additionValue = min(value, bufferCapacity - buffered)
                 buffered += additionValue
-                if (additionValue != value) {
-                    continuations.add {
-                        cont.resume(additionValue)
-                    }
-                    waiter.resume()
-                } else {
-                    waiter.resume()
-                    cont.resume(value)
+                additionValue
+            }
+            if (additionValue != value) {
+                mutex.withLock {
+                    continuations.add(consumptionWaiter)
                 }
+                waiter.resume()
+                consumptionWaiter.await()
+                additionValue
+            } else {
+                waiter.resume()
+                value
             }
         }
     }

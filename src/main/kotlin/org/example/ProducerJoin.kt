@@ -50,7 +50,7 @@ class ProducerJoin(
     }
 
     private fun subscribeOnProducers() {
-        scope.launch(Dispatchers.Main.immediate) {
+        scope.launch {
             var collectionJob: Job? = null
             _producers.collect { producers ->
                 collectionJob?.cancel()
